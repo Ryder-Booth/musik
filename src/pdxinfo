@@ -1,7 +1,7 @@
-name=musik
+name=musik Lite
 author=nanobot567
-description=simple music player for playdate
-bundleID=com.nano.musik
-version=4.2.2
-buildNumber=1145
+description=A simple music player for the Playdate
+bundleID=com.nano.musik.Lite
+version=1.0.0
+buildNumber=1
 imagePath=SystemAssets

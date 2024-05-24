@@ -1,7 +1,11 @@
+------------------------------------------------------------------------------------------------------------ basic var definitions
+
 local gfx <const> = pd.graphics
 local disp <const> = pd.display
 local timer <const> = pd.timer
 local fs <const> = pd.file
+
+------------------------------------------------------------------------------------------------------------ bAction catch all
 
 function bAction()
   curRow = fileList:getSelectedRow()
@@ -42,6 +46,7 @@ function bAction()
   end
 end
 
+------------------------------------------------------------------------------------------------------------ tables?
 
 function indexOf(tab, str)
   for i, s in ipairs(tab) do
@@ -62,6 +67,8 @@ function inTable(tab, str)
   return false
 end
 
+------------------------------------------------------------------------------------------------------------ fomats etc
+
 function findSupportedTypes(str)
   if str ~= nil then
     if (string.find(str,"%.mp3",#str-3) ~= nil or string.find(str,"%.pda",#str-3) ~= nil) and string.find(str,"/",#str-1) == nil then
@@ -75,6 +82,8 @@ function fixFormatting(string)
   return string.gsub(string.gsub(string,"*","**"),"_","__")
 end
 
+------------------------------------------------------------------------------------------------------------ screens
+
 function lockScreenFunc()
   locked = true
   gfx.clear(bgColor)
@@ -86,7 +95,7 @@ function swapScreenMode()
     screenMode = 1
 
     if mode == 4 and currentAudio:isPlaying() == false then
-      handleSongEnd()
+      actualSongEnd() -- switch to actualSongEnd to make sure the song ends
     end
   elseif screenMode == 1 then
     if mode == 4 then
@@ -146,9 +155,11 @@ function swapColorMode(mode)
   end
 end
 
+------------------------------------------------------------------------------------------------------------ settings
+
 function saveSettings()
   local settingsFile = fs.open("/data/settings.json", fs.kFileWrite)
-  settingsFile:write(json.encode({darkMode,clockMode,showInfoEverywhere,screenRoundness,lockScreen,lockScreenTime}))
+  settingsFile:write(json.encode({darkMode,clockMode,showInfoEverywhere,screenRoundness,lockScreen,lockScreenTime,modeString}))
   settingsFile:close()
 end
 
@@ -164,6 +175,7 @@ function loadSettings()
     screenRoundness = tonumber(settings[4])
     lockScreen = settings[5]
     lockScreenTime = tonumber(settings[6])
+    modeString = settings[7]  -- add modeString to the settingsFile
 
     if lockScreen == true then
       lockTimer = timer.new((lockScreenTime*60)*1000, lockScreenFunc)
@@ -175,13 +187,22 @@ function loadSettings()
     lockScreen = false
     screenRoundness = 4
     lockScreenTime = 2
+    modeString = "none" -- added modeString to the default of settingsFile
     if lockScreen == true then
       lockTimer = timer.new((lockScreenTime*60)*1000, lockScreenFunc)
     end
   end
+
+  handleMode(modeString) -- when loading settings rember to load the modeString
 end
 
-function handleMode(str) -- add queue mode
+------------------------------------------------------------------------------------------------------------ next song modes
+
+function handleMode(str)
+  if str == nil then -- because people might have had a pre modeString settings file you need to not load when the modeString is nil
+    return
+  end
+  
   print("mode is now "..str)
   modeString = str
 
@@ -222,6 +243,8 @@ function split(inputstr,sep)
   return t
 end
 
+------------------------------------------------------------------------------------------------------------ settings list
+
 function newSettingsList()
   local setList = ({"dark mode - "..tostring(darkMode),
   "24 hour clock - "..tostring(clockMode),
@@ -236,6 +259,8 @@ function newSettingsList()
 
   return setList
 end
+
+------------------------------------------------------------------------------------------------------------ draw info
 
 function drawInfo()
   local extension
@@ -262,85 +287,123 @@ function drawInfo()
     batteryPercent = string.sub(string.gsub(batteryPercent,"%.",""),1,2)
   end
 
-  local size = gfx.getTextSize(batteryPercent.."%",dosFnt)
-
-  dosFnt:drawTextAligned(time["hour"]..":"..time["minute"],1,1,400,20,kTextAlignment.left,nil)
-  dosFnt:drawTextAligned(batteryPercent.."%",401-size,1,400,20,kTextAlignment.right,nil)
+  if screenMode == 1 then
+    dosFnt:drawTextAligned(time["hour"]..":"..time["minute"],10,10,kTextAlignment.left)
+    dosFnt:drawTextAligned(batteryPercent.."%",390,10,kTextAlignment.right)
+    gfx.drawRoundRect(5, 5, 390, 17, screenRoundness)
+  else
+    dosFnt:drawTextAligned(time["hour"]..":"..time["minute"],3,3,kTextAlignment.left)
+    dosFnt:drawTextAligned(batteryPercent.."%",397,3,kTextAlignment.right)
+  end
   -- gfx.setImageDrawMode(dMColor2)
 end
 
-function handleSongEnd() -- fix literally everything :) have fun future aiden - i did it past me! aren't you proud of me?
-  print(currentAudio:didUnderrun())
-  local justInQueue = false
-  audioFiles = {}
+------------------------------------------------------------------------------------------------------------ handleSongEnd components
+
+-- Helper function to load audio files
+function loadAudioFiles(files) 
+  local audioFiles = {}
   for i=1,#files do
     if findSupportedTypes(files[i]) then
       table.insert(audioFiles,files[i])
     end
   end
+  return audioFiles
+end
+
+-- Helper function to handle mode 2
+function handleMode2(audioFiles)
+  if currentFileName == audioFiles[1] then  -- checks if the current file being played (currentFileName) is the first file in (audioFiles)
+    currentPos = 1
+  end
+  if currentFileName == audioFiles[#audioFiles] then -- checks if the current file is the last file in (audioFiles)
+    if not pd.buttonIsPressed("a") then
+      if fs.isdir(dir..audioFiles[1]) == false then
+        currentFileName = audioFiles[1]
+        currentAudio:load(dir..audioFiles[1])
+      end
+    end
+  else
+    local isdir = fs.isdir(dir..audioFiles[currentPos+1])
+    if isdir == true then
+      currentPos += 2
+    else
+      currentPos += 1
+    end
+
+    currentFileName = audioFiles[currentPos]
+    currentAudio:load(dir..audioFiles[currentPos])
+  end
+end
+
+-- Helper function to handle mode 1
+function handleMode1(audioFiles)
+  local randthing = math.random(1,#audioFiles)
+  if dir..audioFiles[randthing] == currentFilePath and #audioFiles ~= 1 then
+    while dir..audioFiles[randthing] == currentFilePath do
+      randthing = math.random(1,#audioFiles)
+    end
+  end
+  currentFileName = audioFiles[randthing]
+  currentAudio:load(dir..audioFiles[randthing])
+end
+
+-- Helper function to handle mode 0
+function handleMode0()
+  currentAudio = pd.sound.fileplayer.new()
+  currentAudio:setFinishCallback(handleSongEnd)
+  currentFileName = ""
+  currentFileDir = ""
+  currentFilePath = ""
+end
+
+-- Helper function to handle mode 4
+function handleMode4()
+  if #queueList == 1 then
+    mode = 1
+    modeMenuItem:setValue("shuffle")
+    modeString = "shuffle"
+    justInQueue = true
+  end
+
+  if #queueList ~= 0 then
+    currentFileName = queueListNames[1]
+    currentFileDir = queueListDirs[1]
+    currentFilePath = queueList[1]
+    table.remove(queueList, 1)
+    table.remove(queueListDirs, 1)
+    table.remove(queueListNames, 1)
+    currentAudio:load(currentFilePath)
+  else
+    mode = 0
+    modeMenuItem:setValue("none")
+    modeString = "none"
+  end
+end
+
+function actualSongEnd()
+
+  updateGetLength = true
+
+  local justInQueue = false
+
+  -- Load audio files
+  local audioFiles = loadAudioFiles(files)
 
   currentAudio:pause()
 
+  -- Handle different modes
   if mode == 2 then
-    if currentFileName == audioFiles[1] then
-      currentPos = 1
-    end
-    if currentFileName == audioFiles[#audioFiles] then
-      if not pd.buttonIsPressed("a") then
-        if fs.isdir(dir..audioFiles[1]) == false then
-          currentFileName = audioFiles[1]
-          currentAudio:load(dir..audioFiles[1])
-        end
-      end
-    else
-      local isdir = fs.isdir(dir..audioFiles[currentPos+1])
-      if isdir == true then
-        currentPos += 2
-      else
-        currentPos += 1
-      end
-
-      currentFileName = audioFiles[currentPos]
-      currentAudio:load(dir..audioFiles[currentPos])
-    end
+    handleMode2(audioFiles)
   elseif mode == 1 then
-    local randthing = math.random(1,#audioFiles)
-    if dir..audioFiles[randthing] == currentFilePath and #audioFiles ~= 1 then
-      while dir..audioFiles[randthing] == currentFilePath do
-        randthing = math.random(1,#audioFiles)
-      end
-    end
-    currentFileName = audioFiles[randthing]
-    currentAudio:load(dir..audioFiles[randthing])
+    handleMode1(audioFiles)
   elseif mode == 0 then
-    currentAudio = pd.sound.fileplayer.new()
-    currentAudio:setFinishCallback(handleSongEnd)
-    currentFileName = ""
-    currentFileDir = ""
-    currentFilePath = ""
+    handleMode0()
   elseif mode == 4 then
-    if #queueList == 1 then
-      mode = 1
-      modeMenuItem:setValue("shuffle")
-      modeString = "shuffle"
-      justInQueue = true
-    end
-
-    if #queueList ~= 0 then
-      currentFileName = queueListNames[1]
-      currentFileDir = queueListDirs[1]
-      currentFilePath = queueList[1]
-      table.remove(queueList, 1)
-      table.remove(queueListDirs, 1)
-      table.remove(queueListNames, 1)
-      currentAudio:load(currentFilePath)
-    else
-      mode = 0
-      modeMenuItem:setValue("none")
-      modeString = "none"
-    end
+    handleMode4()
   end
 
+  
   if mode ~= 4 then
     if justInQueue == false then
       currentFilePath = dir..currentFileName
@@ -350,20 +413,66 @@ function handleSongEnd() -- fix literally everything :) have fun future aiden - 
   table.insert(lastSongNames,currentFileName)
   table.insert(lastSongDirs,currentFileDir)
 
-  audioLen = currentAudio:getLength()
+  audioLen = getLengthVar
 
   currentAudio:setRate(1.0)
 
   if mode ~= 0 then
-    if mode ~= 3 then
+    pd.timer.new(10, function()
+      currentAudio:pause()
       currentAudio:setOffset(0)
-    end
+      currentAudio:play()
+    end)
     currentAudio:play()
   else
     currentFilePath = ""
     pd.setAutoLockDisabled(false)
   end
+  
 end
+
+-- Main function
+function handleSongEnd() -- fix literally everything :) have fun future aiden - i did it past me! aren't you proud of me?
+
+  --print("please change songs???")
+
+  -- Increment the counter each time the function is called
+  songEndErrorCounter = songEndErrorCounter + 1
+
+  -- If the function has been called more than once in 100 frames, return immediately
+  if songEndErrorCounter > 5 then
+    --print("way too much!")
+    errorCode = "That was not good! :)"
+    errorHappened = true
+    actualSongEnd()
+    return
+  end
+
+  -- Reset the counter after 100 frames
+  pd.timer.new(300, function()
+    songEndErrorCounter = 0
+  end)
+
+  if (math.abs(currentAudio:getOffset() - currentAudio:getLength()) <= 5) and (math.abs(getLengthVar - currentAudio:getLength()) <= 5) then
+    --print("actual song change")
+    actualSongEnd()
+  else
+    --print("averting crisis?")
+    errorCode = "Oops..."
+    errorHappened = true
+    currentAudio:pause()
+    currentAudio:setOffset(math.floor(saveSongSpot2 + 0.5))
+    currentAudio:play()
+
+    safeToReset = false
+    pd.timer.new(100, function()
+      safeToReset = true
+    end)
+  end
+  
+end
+
+------------------------------------------------------------------------------------------------------------ seconds formating
 
 function formatSeconds(seconds)
   local seconds = tonumber(seconds)
@@ -378,11 +487,11 @@ function formatSeconds(seconds)
   end
 end
 
+------------------------------------------------------------------------------------------------------------ button funcs
+
 function pd.downButtonDown()
   local function timerCallback()
-    if fileList:getSelectedRow() ~= #files then
-      fileList:selectNextRow(true)
-    end
+    fileList:selectNextRow(true)
   end
   if screenMode == 0 or screenMode == 3 then
     downKeyTimer = timer.keyRepeatTimerWithDelay(300,50,timerCallback)
@@ -397,9 +506,7 @@ end
 
 function pd.upButtonDown()
   local function timerCallback()
-    if fileList:getSelectedRow() ~= 1 then
-      fileList:selectPreviousRow(true)
-    end
+    fileList:selectPreviousRow(true)
   end
   if screenMode == 0 or screenMode == 3 then
     upKeyTimer = timer.keyRepeatTimerWithDelay(300,50,timerCallback)
